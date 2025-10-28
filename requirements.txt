@@ -1,5 +1,5 @@
 # Database
-supabase==2.3.4
+supabase==2.7.4
 python-dotenv==1.0.0
 
 # Machine Learning
@@ -7,9 +7,10 @@ torch==2.1.2
 transformers==4.36.2
 sentence-transformers==2.3.1
 
-# Data Processing
+# Data Processing & Scientific Computing
 numpy==1.26.3
 pandas==2.1.4
+scipy==1.11.4
 
 # Utilities
 tqdm==4.66.1
