@@ -213,41 +213,41 @@ class SupabaseClient:
             return False
     
     def batch_insert_embeddings(self, embeddings: List[Dict[str, Any]]) -> int:
-    """
-    Batch insert multiple embeddings (with duplicate handling)
-    
-    Args:
-        embeddings: List of embedding dictionaries
-    
-    Returns:
-        Number of successful insertions
-    """
-    if not embeddings:
-        return 0
-    
-    try:
-        # Try batch insert first
-        self.client.table("article_embeddings").insert(embeddings).execute()
-        print(f"✅ Inserted {len(embeddings)} embeddings")
-        return len(embeddings)
-    except Exception as e:
-        error_msg = str(e)
-        if '23505' in error_msg or 'duplicate key' in error_msg:
-            # Handle duplicates by inserting one-by-one
-            print(f"⚠️  Duplicate embeddings detected, inserting individually...")
-            success_count = 0
-            for emb in embeddings:
-                try:
-                    self.client.table("article_embeddings").insert(emb).execute()
-                    success_count += 1
-                except Exception as individual_error:
-                    if '23505' not in str(individual_error):
-                        print(f"❌ Failed to insert embedding for article {emb.get('article_id')}: {individual_error}")
-            print(f"✅ Inserted {success_count}/{len(embeddings)} embeddings (skipped duplicates)")
-            return success_count
-        else:
-            print(f"❌ Error batch inserting embeddings: {e}")
+        """
+        Batch insert multiple embeddings (with duplicate handling)
+        
+        Args:
+            embeddings: List of embedding dictionaries
+        
+        Returns:
+            Number of successful insertions
+        """
+        if not embeddings:
             return 0
+        
+        try:
+            # Try batch insert first
+            self.client.table("article_embeddings").insert(embeddings).execute()
+            print(f"✅ Inserted {len(embeddings)} embeddings")
+            return len(embeddings)
+        except Exception as e:
+            error_msg = str(e)
+            if '23505' in error_msg or 'duplicate key' in error_msg:
+                # Handle duplicates by inserting one-by-one
+                print(f"⚠️  Duplicate embeddings detected, inserting individually...")
+                success_count = 0
+                for emb in embeddings:
+                    try:
+                        self.client.table("article_embeddings").insert(emb).execute()
+                        success_count += 1
+                    except Exception as individual_error:
+                        if '23505' not in str(individual_error):
+                            print(f"❌ Failed to insert embedding for article {emb.get('article_id')}: {individual_error}")
+                print(f"✅ Inserted {success_count}/{len(embeddings)} embeddings (skipped duplicates)")
+                return success_count
+            else:
+                print(f"❌ Error batch inserting embeddings: {e}")
+                return 0
     
     def get_embeddings_by_article_ids(self, article_ids: List[str]) -> List[Dict[str, Any]]:
         """
