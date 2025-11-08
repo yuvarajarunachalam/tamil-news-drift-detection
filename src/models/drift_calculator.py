@@ -9,21 +9,6 @@ from datetime import datetime
 from scipy.spatial.distance import cosine
 from scipy.special import kl_div
 
-def convert_to_json_serializable(obj):
-    """Convert numpy types to Python native types for JSON serialization"""
-    if isinstance(obj, (np.integer, np.int64, np.int32)):
-        return int(obj)
-    elif isinstance(obj, (np.floating, np.float64, np.float32)):
-        return float(obj)
-    elif isinstance(obj, (np.bool_, bool)):
-        return bool(obj)
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, dict):
-        return {key: convert_to_json_serializable(value) for key, value in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_to_json_serializable(item) for item in obj]
-    return obj
 
 class DriftCalculator:
     """Calculates various drift metrics"""
@@ -385,8 +370,7 @@ class DriftCalculator:
         for metric in metrics:
             status = "🚨 DRIFT" if metric["drift_detected"] else "✅ NO DRIFT"
             print(f"  {metric['metric_type']}: {metric['metric_value']:.6f} - {status}")
-
-        metrics = [convert_to_json_serializable(metric) for metric in metrics]
+        
         return metrics
 
 
