@@ -99,80 +99,80 @@ class BaselineGenerator:
         
         self.logger.info(f"Processing batch {batch_num}/{total_batches} (articles {batch_start}-{batch_end})")
         
-        # Log batch start
-        self.db.log_batch_start(batch_num, batch_start, batch_end)
+        # Log batch start (ignore duplicate key errors)
+        try:
+            self.db.log_batch_start(batch_num, batch_start, batch_end)
+        except Exception as e:
+            self.logger.warning(f"Could not log batch start (may already exist): {e}")
         
         # Fetch articles
         articles = self.db.get_baseline_articles(limit=self.batch_size, offset=offset)
         
-        # FIX: Handle if articles is not a list
-        if not articles or not isinstance(articles, list):
-            self.logger.warning(f"No articles found or invalid data for batch {batch_num}")
-            return
-        
-        if len(articles) == 0:
+        if not articles or len(articles) == 0:
             self.logger.warning(f"No articles found for batch {batch_num}")
             return
         
-        # Extract texts and IDs - with error handling
-        texts = []
-        article_ids = []
-        
-        for article in articles:
-            # Handle if article is a string (JSON) instead of dict
-            if isinstance(article, str):
-                import json
-                article = json.loads(article)
-            
-            # Safely extract content_full and id
-            content = article.get('content_full') or article.get('description', '')
-            article_id = article.get('id')
-            
-            if content and article_id:
-                texts.append(content)
-                article_ids.append(article_id)
+        # DEBUG: Log the type and structure of articles
+        self.logger.info(f"DEBUG: articles type: {type(articles)}")
+        self.logger.info(f"DEBUG: articles length: {len(articles)}")
+        if articles:
+            self.logger.info(f"DEBUG: first article type: {type(articles[0])}")
+            if isinstance(articles[0], dict):
+                self.logger.info(f"DEBUG: first article keys: {list(articles[0].keys())}")
+                self.logger.info(f"DEBUG: first article id: {articles[0].get('id', 'NO ID')}")
+                self.logger.info(f"DEBUG: first article has content_full: {'content_full' in articles[0]}")
             else:
-                self.logger.warning(f"Skipping article with missing content or ID: {article}")
+                self.logger.info(f"DEBUG: first article is NOT a dict, it's: {str(articles[0])[:200]}")
         
-        if not texts:
-            self.logger.error(f"No valid articles with content in batch {batch_num}")
+        # Generate sentiment scores - pass articles directly
+        self.logger.info(f"Generating sentiment scores for {len(articles)} articles...")
+        
+        try:
+            sentiment_results = self.sentiment_analyzer.analyze_batch(articles)
+        except Exception as e:
+            self.logger.error(f"Sentiment analysis failed: {str(e)}")
+            self.logger.error(f"Error type: {type(e).__name__}")
+            import traceback
+            self.logger.error(f"Full traceback: {traceback.format_exc()}")
+            raise
+        
+        if not sentiment_results:
+            self.logger.error(f"No sentiment results returned for batch {batch_num}")
             return
-        
-        # Generate sentiment scores
-        self.logger.info(f"Generating sentiment scores for {len(texts)} articles...")
-        sentiment_results = self.sentiment_analyzer.analyze_batch(texts)
         
         # Prepare sentiment data for insertion
         sentiment_data = []
-        for i, article_id in enumerate(article_ids):
+        for result in sentiment_results:
             sentiment_data.append({
-                'article_id': article_id,
-                'sentiment_label': sentiment_results['labels'][i],
-                'positive_score': float(sentiment_results['scores'][i][2]),  # Index 2 is positive
-                'neutral_score': float(sentiment_results['scores'][i][1]),   # Index 1 is neutral
-                'negative_score': float(sentiment_results['scores'][i][0]),  # Index 0 is negative
+                'article_id': result['article_id'],
+                'sentiment_label': result['sentiment_label'].lower(),  # Convert POSITIVE -> positive
+                'positive_score': result['sentiment_scores']['positive'],
+                'neutral_score': result['sentiment_scores']['neutral'],
+                'negative_score': result['sentiment_scores']['negative'],
                 'is_baseline': True,
                 'processed_at': datetime.now().isoformat()
             })
         
         # Insert sentiment scores
+        self.logger.info(f"Inserting {len(sentiment_data)} sentiment scores...")
         self.db.insert_sentiment_scores(sentiment_data)
         
-        # Generate embeddings
-        self.logger.info(f"Generating embeddings for {len(texts)} articles...")
+        # Generate embeddings - extract texts for embedding generator
+        self.logger.info(f"Generating embeddings for {len(articles)} articles...")
+        texts = [article['content_full'] for article in articles]
         semantic_embeddings = self.embedding_generator.generate_semantic_embeddings(texts)
         
         # Prepare embedding data for insertion
         embedding_data = []
-        for i, article_id in enumerate(article_ids):
+        for i, result in enumerate(sentiment_results):
             sentiment_vector = [
-                sentiment_data[i]['positive_score'],
-                sentiment_data[i]['neutral_score'],
-                sentiment_data[i]['negative_score']
+                result['sentiment_scores']['positive'],
+                result['sentiment_scores']['neutral'],
+                result['sentiment_scores']['negative']
             ]
             
             embedding_data.append({
-                'article_id': article_id,
+                'article_id': result['article_id'],
                 'semantic_embedding': semantic_embeddings[i].tolist(),
                 'sentiment_vector': sentiment_vector,
                 'is_baseline': True,
@@ -180,9 +180,11 @@ class BaselineGenerator:
             })
         
         # Insert embeddings
+        self.logger.info(f"Inserting {len(embedding_data)} embeddings...")
         self.db.insert_embeddings(embedding_data)
         
         # Update processed_date in news_cleaned
+        article_ids = [result['article_id'] for result in sentiment_results]
         self.db.update_processed_date(article_ids, datetime.now().isoformat())
         
         # Log batch completion
