@@ -103,16 +103,41 @@ class BaselineGenerator:
         # Fetch articles
         articles = self.db.get_baseline_articles(limit=self.batch_size, offset=offset)
         
-        if not articles:
+        # FIX: Handle if articles is not a list
+        if not articles or not isinstance(articles, list):
+            self.logger.warning(f"No articles found or invalid data for batch {batch_num}")
+            return
+        
+        if len(articles) == 0:
             self.logger.warning(f"No articles found for batch {batch_num}")
             return
         
-        # Extract texts and IDs
-        texts = [article['content_full'] for article in articles]
-        article_ids = [article['id'] for article in articles]
+        # Extract texts and IDs - with error handling
+        texts = []
+        article_ids = []
+        
+        for article in articles:
+            # Handle if article is a string (JSON) instead of dict
+            if isinstance(article, str):
+                import json
+                article = json.loads(article)
+            
+            # Safely extract content_full and id
+            content = article.get('content_full') or article.get('description', '')
+            article_id = article.get('id')
+            
+            if content and article_id:
+                texts.append(content)
+                article_ids.append(article_id)
+            else:
+                self.logger.warning(f"Skipping article with missing content or ID: {article}")
+        
+        if not texts:
+            self.logger.error(f"No valid articles with content in batch {batch_num}")
+            return
         
         # Generate sentiment scores
-        self.logger.info(f"Generating sentiment scores for {len(articles)} articles...")
+        self.logger.info(f"Generating sentiment scores for {len(texts)} articles...")
         sentiment_results = self.sentiment_analyzer.analyze_batch(texts)
         
         # Prepare sentiment data for insertion
@@ -132,7 +157,7 @@ class BaselineGenerator:
         self.db.insert_sentiment_scores(sentiment_data)
         
         # Generate embeddings
-        self.logger.info(f"Generating embeddings for {len(articles)} articles...")
+        self.logger.info(f"Generating embeddings for {len(texts)} articles...")
         semantic_embeddings = self.embedding_generator.generate_semantic_embeddings(texts)
         
         # Prepare embedding data for insertion
