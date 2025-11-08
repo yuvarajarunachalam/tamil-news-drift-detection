@@ -60,6 +60,29 @@ class EmbeddingGenerator:
         
         return embedding.tolist()
     
+    def generate_semantic_embeddings(
+        self,
+        texts: List[str],
+        max_length: int = 2000
+    ) -> np.ndarray:
+        """
+        Generate semantic embeddings for multiple texts (batch)
+        
+        Args:
+            texts: List of input texts
+            max_length: Maximum characters to process per text
+        
+        Returns:
+            numpy array of embeddings (N x 384)
+        """
+        # Truncate texts if too long
+        truncated_texts = [text[:max_length] if len(text) > max_length else text for text in texts]
+        
+        # Generate embeddings in batch (more efficient)
+        embeddings = self.model.encode(truncated_texts, convert_to_numpy=True, show_progress_bar=False)
+        
+        return embeddings
+    
     def generate_sentiment_vector(
         self,
         sentiment_scores: Dict[str, float]
