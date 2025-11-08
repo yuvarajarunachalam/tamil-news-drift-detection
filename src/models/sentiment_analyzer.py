@@ -1,244 +1,211 @@
 """
-Baseline Generator
-Processes all baseline articles and generates sentiment scores, embeddings, and statistics
+Sentiment Analysis Model
+Wrapper for cardiffnlp/twitter-roberta-base-sentiment-latest
 """
 
-import sys
-import os
-from datetime import datetime
 import time
-import numpy as np
 from typing import List, Dict, Any
-
-# Add parent directory to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from database.supabase_client import SupabaseClient
-from models.sentiment_analyzer import SentimentAnalyzer
-from models.embedding_generator import EmbeddingGenerator
-from monitoring.telegram_notifier import TelegramNotifier
-from utils.logger import setup_logger
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import numpy as np
 
 
-class BaselineGenerator:
-    def __init__(self, batch_size: int = 50):
+class SentimentAnalyzer:
+    """Sentiment analysis using pre-trained RoBERTa model"""
+    
+    def __init__(self, model_name: str = "cardiffnlp/twitter-roberta-base-sentiment-latest"):
         """
-        Initialize baseline generator
+        Initialize sentiment analyzer
         
         Args:
-            batch_size: Number of articles to process per batch
+            model_name: HuggingFace model identifier
         """
-        self.batch_size = batch_size
-        self.db = SupabaseClient()
-        self.sentiment_analyzer = SentimentAnalyzer()
-        self.embedding_generator = EmbeddingGenerator()
-        self.telegram = TelegramNotifier()
-        self.logger = setup_logger()
+        self.model_name = model_name
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
-    def run(self):
-        """Main execution method"""
+        print(f"\n🤖 Loading sentiment model: {model_name}")
+        print(f"📱 Device: {self.device}")
+        
+        # Load tokenizer and model
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
+        self.model.to(self.device)
+        self.model.eval()  # Set to evaluation mode
+        
+        # Label mapping
+        self.labels = ['NEGATIVE', 'NEUTRAL', 'POSITIVE']
+        
+        print(f"✅ Model loaded successfully!")
+        print(f"📊 Labels: {self.labels}")
+    
+    def analyze_single(
+        self,
+        text: str,
+        max_length: int = 2000
+    ) -> Dict[str, Any]:
+        """
+        Analyze sentiment of a single text
+        
+        Args:
+            text: Input text to analyze
+            max_length: Maximum characters to analyze (truncate if longer)
+        
+        Returns:
+            Dictionary with sentiment analysis results
+        """
+        # Truncate text if too long
+        if len(text) > max_length:
+            text = text[:max_length]
+        
         start_time = time.time()
         
-        try:
-            # Get total article count
-            total_articles = self.db.get_baseline_count()
-            total_batches = (total_articles + self.batch_size - 1) // self.batch_size
-            
-            self.logger.info(f"Starting baseline generation: {total_articles} articles, {total_batches} batches")
-            self.telegram.processing_started(total_articles, total_batches)
-            
-            # Get completed batches (for resume capability)
-            completed_batches = self.db.get_completed_batches()
-            self.logger.info(f"Found {len(completed_batches)} already completed batches")
-            
-            # Process batches
-            for batch_num in range(1, total_batches + 1):
-                # Skip already completed batches
-                if batch_num in completed_batches:
-                    self.logger.info(f"Skipping batch {batch_num}/{total_batches} (already completed)")
-                    continue
-                
-                try:
-                    self._process_batch(batch_num, total_batches)
-                except Exception as e:
-                    error_msg = str(e)
-                    self.logger.error(f"Batch {batch_num} failed: {error_msg}")
-                    self.telegram.batch_failed(batch_num, total_batches, error_msg)
-                    self.db.log_batch_failed(batch_num, error_msg)
-                    # Continue with next batch instead of stopping
-                    continue
-            
-            # Calculate and store baseline statistics
-            self.logger.info("Calculating baseline statistics...")
-            self._calculate_baseline_statistics()
-            
-            # Send completion notification
-            elapsed_time = self._format_elapsed_time(time.time() - start_time)
-            self.logger.info(f"Baseline generation complete! Time: {elapsed_time}")
-            self.telegram.processing_complete(total_articles, elapsed_time)
-            
-        except Exception as e:
-            error_msg = f"Critical error in baseline generation: {str(e)}"
-            self.logger.error(error_msg)
-            self.telegram.error_alert(error_msg)
-            raise
+        # Tokenize
+        inputs = self.tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=512,  # Model's max token limit
+            padding=True
+        ).to(self.device)
+        
+        # Get predictions
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            scores = outputs.logits[0].cpu().numpy()
+            scores = self._softmax(scores)
+        
+        # Get label and confidence
+        predicted_idx = np.argmax(scores)
+        predicted_label = self.labels[predicted_idx]
+        confidence = float(scores[predicted_idx])
+        
+        # Create scores dict
+        sentiment_scores = {
+            "negative": float(scores[0]),
+            "neutral": float(scores[1]),
+            "positive": float(scores[2])
+        }
+        
+        inference_time = int((time.time() - start_time) * 1000)  # Convert to ms
+        
+        return {
+            "sentiment_label": predicted_label,
+            "confidence": confidence,
+            "sentiment_scores": sentiment_scores,
+            "inference_time_ms": inference_time,
+            "content_length": len(text)
+        }
     
-    def _process_batch(self, batch_num: int, total_batches: int):
+    def analyze_batch(
+        self,
+        articles: List[Dict[str, Any]],
+        batch_size: int = 50,
+        max_length: int = 2000
+    ) -> List[Dict[str, Any]]:
         """
-        Process a single batch of articles
+        Analyze sentiment for a batch of articles
         
         Args:
-            batch_num: Current batch number (1-indexed)
-            total_batches: Total number of batches
+            articles: List of article dictionaries (must have 'content_full' and 'id' fields)
+            batch_size: Number of articles to process at once
+            max_length: Maximum characters per article
+        
+        Returns:
+            List of analysis results
         """
-        offset = (batch_num - 1) * self.batch_size
-        batch_start = offset
-        batch_end = offset + self.batch_size
+        total_articles = len(articles)
+        results = []
         
-        self.logger.info(f"Processing batch {batch_num}/{total_batches} (articles {batch_start}-{batch_end})")
+        print(f"\n🔄 Processing {total_articles} articles in batches of {batch_size}...")
         
-        # Log batch start (ignore duplicate key errors)
-        try:
-            self.db.log_batch_start(batch_num, batch_start, batch_end)
-        except Exception as e:
-            self.logger.warning(f"Could not log batch start (may already exist): {e}")
-        
-        # Fetch articles
-        articles = self.db.get_baseline_articles(limit=self.batch_size, offset=offset)
-        
-        if not articles or len(articles) == 0:
-            self.logger.warning(f"No articles found for batch {batch_num}")
-            return
-        
-        # Generate sentiment scores - pass articles directly
-        self.logger.info(f"Generating sentiment scores for {len(articles)} articles...")
-        sentiment_results = self.sentiment_analyzer.analyze_batch(articles)
-        
-        if not sentiment_results:
-            self.logger.error(f"No sentiment results returned for batch {batch_num}")
-            return
-        
-        # Prepare sentiment data for insertion
-        sentiment_data = []
-        for result in sentiment_results:
-            sentiment_data.append({
-                'article_id': result['article_id'],
-                'sentiment_label': result['sentiment_label'].lower(),  # Convert POSITIVE -> positive
-                'positive_score': result['sentiment_scores']['positive'],
-                'neutral_score': result['sentiment_scores']['neutral'],
-                'negative_score': result['sentiment_scores']['negative'],
-                'is_baseline': True,
-                'processed_at': datetime.now().isoformat()
-            })
-        
-        # Insert sentiment scores
-        self.logger.info(f"Inserting {len(sentiment_data)} sentiment scores...")
-        self.db.insert_sentiment_scores(sentiment_data)
-        
-        # Generate embeddings - extract texts for embedding generator
-        self.logger.info(f"Generating embeddings for {len(articles)} articles...")
-        texts = [article['content_full'] for article in articles]
-        semantic_embeddings = self.embedding_generator.generate_semantic_embeddings(texts)
-        
-        # Prepare embedding data for insertion
-        embedding_data = []
-        for i, result in enumerate(sentiment_results):
-            sentiment_vector = [
-                result['sentiment_scores']['positive'],
-                result['sentiment_scores']['neutral'],
-                result['sentiment_scores']['negative']
-            ]
+        for i in range(0, total_articles, batch_size):
+            batch = articles[i:i + batch_size]
+            batch_num = (i // batch_size) + 1
+            total_batches = (total_articles + batch_size - 1) // batch_size
             
-            embedding_data.append({
-                'article_id': result['article_id'],
-                'semantic_embedding': semantic_embeddings[i].tolist(),
-                'sentiment_vector': sentiment_vector,
-                'is_baseline': True,
-                'created_at': datetime.now().isoformat()
-            })
+            print(f"  Batch {batch_num}/{total_batches} (articles {i+1}-{min(i+batch_size, total_articles)})...", end=" ")
+            
+            batch_start = time.time()
+            
+            for article in batch:
+                # Get article content
+                content = article.get("content_full", "")
+                
+                if not content or content.strip() == "":
+                    print(f"\n⚠️  Warning: Article {article.get('id', 'unknown')} has no content, skipping...")
+                    continue
+                
+                # Analyze sentiment
+                analysis = self.analyze_single(content, max_length)
+                
+                # Add article_id and model version
+                result = {
+                    "article_id": article["id"],
+                    "sentiment_label": analysis["sentiment_label"],
+                    "confidence": analysis["confidence"],
+                    "sentiment_scores": analysis["sentiment_scores"],
+                    "model_version": self.model_name,
+                    "content_length_analyzed": analysis["content_length"],
+                    "model_inference_time_ms": analysis["inference_time_ms"]
+                }
+                
+                results.append(result)
+            
+            batch_time = time.time() - batch_start
+            avg_time = batch_time / len(batch) if len(batch) > 0 else 0
+            
+            print(f"✓ ({batch_time:.2f}s, {avg_time:.3f}s/article)")
         
-        # Insert embeddings
-        self.logger.info(f"Inserting {len(embedding_data)} embeddings...")
-        self.db.insert_embeddings(embedding_data)
+        print(f"\n✅ Batch processing complete!")
+        print(f"📊 Successfully processed: {len(results)}/{total_articles} articles")
         
-        # Update processed_date in news_cleaned
-        article_ids = [result['article_id'] for result in sentiment_results]
-        self.db.update_processed_date(article_ids, datetime.now().isoformat())
+        # Show sentiment distribution
+        self._print_sentiment_distribution(results)
         
-        # Log batch completion
-        self.db.log_batch_complete(batch_num)
-        self.logger.info(f"Batch {batch_num}/{total_batches} completed successfully")
-        self.telegram.batch_complete(batch_num, total_batches)
+        return results
     
-    def _calculate_baseline_statistics(self):
-        """Calculate and store baseline statistics"""
-        self.logger.info("Fetching all sentiment scores and embeddings...")
-        
-        # Fetch all baseline data
-        sentiment_scores = self.db.get_all_sentiment_scores(is_baseline=True)
-        embeddings = self.db.get_all_embeddings(is_baseline=True)
-        
-        if not sentiment_scores or not embeddings:
-            self.logger.error("No baseline data found to calculate statistics")
-            return
-        
-        # Calculate sentiment distribution
-        total = len(sentiment_scores)
-        positive_count = sum(1 for s in sentiment_scores if s['sentiment_label'] == 'positive')
-        neutral_count = sum(1 for s in sentiment_scores if s['sentiment_label'] == 'neutral')
-        negative_count = sum(1 for s in sentiment_scores if s['sentiment_label'] == 'negative')
-        
-        sentiment_distribution = {
-            'positive': round(positive_count / total, 4),
-            'neutral': round(neutral_count / total, 4),
-            'negative': round(negative_count / total, 4)
-        }
-        
-        # Calculate mean embeddings
-        semantic_embeddings = np.array([e['semantic_embedding'] for e in embeddings])
-        sentiment_vectors = np.array([e['sentiment_vector'] for e in embeddings])
-        
-        mean_semantic_embedding = np.mean(semantic_embeddings, axis=0).tolist()
-        mean_sentiment_vector = np.mean(sentiment_vectors, axis=0).tolist()
-        
-        # Calculate standard deviations
-        positive_scores = [s['positive_score'] for s in sentiment_scores]
-        neutral_scores = [s['neutral_score'] for s in sentiment_scores]
-        negative_scores = [s['negative_score'] for s in sentiment_scores]
-        
-        std_sentiment_scores = {
-            'positive_std': round(float(np.std(positive_scores)), 4),
-            'neutral_std': round(float(np.std(neutral_scores)), 4),
-            'negative_std': round(float(np.std(negative_scores)), 4)
-        }
-        
-        # Prepare baseline statistics
-        baseline_stats = {
-            'version': 1,
-            'baseline_date': datetime.now().isoformat(),
-            'total_articles': total,
-            'sentiment_distribution': sentiment_distribution,
-            'mean_semantic_embedding': mean_semantic_embedding,
-            'mean_sentiment_vector': mean_sentiment_vector,
-            'std_sentiment_scores': std_sentiment_scores
-        }
-        
-        # Insert into database
-        self.logger.info("Storing baseline statistics...")
-        self.db.insert_baseline_statistics(baseline_stats)
-        
-        self.logger.info(f"Baseline statistics stored successfully:")
-        self.logger.info(f"  - Total articles: {total}")
-        self.logger.info(f"  - Sentiment distribution: {sentiment_distribution}")
-        self.logger.info(f"  - Std deviations: {std_sentiment_scores}")
+    def _softmax(self, scores: np.ndarray) -> np.ndarray:
+        """Apply softmax to convert logits to probabilities"""
+        exp_scores = np.exp(scores - np.max(scores))
+        return exp_scores / exp_scores.sum()
     
-    def _format_elapsed_time(self, seconds: float) -> str:
-        """Format elapsed time in hours and minutes"""
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        return f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+    def _print_sentiment_distribution(self, results: List[Dict[str, Any]]):
+        """Print sentiment distribution summary"""
+        sentiment_counts = {"POSITIVE": 0, "NEUTRAL": 0, "NEGATIVE": 0}
+        total_confidence = 0
+        
+        for result in results:
+            sentiment_counts[result["sentiment_label"]] += 1
+            total_confidence += result["confidence"]
+        
+        total = len(results)
+        avg_confidence = total_confidence / total if total > 0 else 0
+        
+        print(f"\n📊 Sentiment Distribution:")
+        for label in ['POSITIVE', 'NEUTRAL', 'NEGATIVE']:
+            count = sentiment_counts[label]
+            percentage = (count / total * 100) if total > 0 else 0
+            print(f"  {label}: {count} ({percentage:.1f}%)")
+        
+        print(f"\n📈 Average Confidence: {avg_confidence:.3f}")
 
 
-if __name__ == "__main__":
-    generator = BaselineGenerator(batch_size=50)
-    generator.run()
+# Convenience function
+def analyze_articles(
+    articles: List[Dict[str, Any]],
+    model_name: str = "cardiffnlp/twitter-roberta-base-sentiment-latest",
+    batch_size: int = 50
+) -> List[Dict[str, Any]]:
+    """
+    Analyze sentiment for a list of articles
+    
+    Args:
+        articles: List of article dictionaries
+        model_name: HuggingFace model identifier
+        batch_size: Batch size for processing
+    
+    Returns:
+        List of analysis results
+    """
+    analyzer = SentimentAnalyzer(model_name)
+    return analyzer.analyze_batch(articles, batch_size)

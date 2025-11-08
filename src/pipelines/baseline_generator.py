@@ -11,7 +11,9 @@ import numpy as np
 from typing import List, Dict, Any
 
 # Add parent directory to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+current_dir = os.path.dirname(os.path.abspath(__file__))  # pipelines/
+src_dir = os.path.dirname(current_dir)  # src/
+sys.path.insert(0, src_dir)
 
 from database.supabase_client import SupabaseClient
 from models.sentiment_analyzer import SentimentAnalyzer
