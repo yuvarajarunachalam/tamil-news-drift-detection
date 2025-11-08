@@ -34,9 +34,16 @@ def main():
     print("="*60)
     
     # Configuration from environment
-    baseline_size = 10  # int(os.getenv("BASELINE_SAMPLE_SIZE", 500))
-    test_size = 10      # int(os.getenv("TEST_SAMPLE_SIZE", 500))
-    batch_size = 5  
+    baseline_size = int(os.getenv("BASELINE_SAMPLE_SIZE", 500))
+    test_size = int(os.getenv("TEST_SAMPLE_SIZE", 500))
+    batch_size = int(os.getenv("BATCH_SIZE", 50))
+
+    # Debug output (keep this - it's helpful!)
+    print(f"🔧 DEBUG - Configuration loaded:")
+    print(f"   BASELINE_SAMPLE_SIZE: {baseline_size}")
+    print(f"   TEST_SAMPLE_SIZE: {test_size}")
+    print(f"   BATCH_SIZE: {batch_size}")
+    print()
     
     kl_threshold = float(os.getenv("KL_DIVERGENCE_THRESHOLD", 0.05))
     cosine_threshold = float(os.getenv("COSINE_SIMILARITY_THRESHOLD", 0.85))

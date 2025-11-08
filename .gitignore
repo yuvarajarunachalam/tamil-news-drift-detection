@@ -37,3 +37,6 @@ models/
 data/
 *.csv
 *.json
+
+notebooks/
+archives/
