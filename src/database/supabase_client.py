@@ -24,24 +24,21 @@ class SupabaseClient:
     def get_baseline_articles(self, limit: Optional[int] = None, offset: int = 0) -> List[Dict[str, Any]]:
         """
         Fetch baseline articles from news_cleaned
-        
-        Args:
-            limit: Number of articles to fetch (None for all)
-            offset: Starting index for pagination
-        
-        Returns:
-            List of article dictionaries
         """
         query = self.client.table('news_cleaned').select('*').eq('is_baseline', True).order('id')
         
         if limit:
             query = query.limit(limit)
-        
-        if offset > 0:
-            query = query.range(offset, offset + limit - 1)
+            if offset > 0:
+                query = query.range(offset, offset + limit - 1)
         
         response = query.execute()
-        return response.data
+        
+        # FIX: Ensure we return the data properly
+        if hasattr(response, 'data'):
+            return response.data if response.data else []
+        else:
+            return []
     
     def get_baseline_count(self) -> int:
         """Get total count of baseline articles"""
