@@ -117,11 +117,11 @@ class DriftDetector:
         return response.data
     
     def _calculate_drift_metrics(
-        self,
-        baseline_stats: Dict[str, Any],
-        new_sentiment: List[Dict[str, Any]],
-        new_embeddings: List[Dict[str, Any]]
-    ) -> Dict[str, float]:
+    self,
+    baseline_stats: Dict[str, Any],
+    new_sentiment: List[Dict[str, Any]],
+    new_embeddings: List[Dict[str, Any]]
+) -> Dict[str, float]:
         """Calculate drift metrics"""
         
         # 1. KL Divergence (sentiment distribution)
@@ -130,16 +130,48 @@ class DriftDetector:
         
         kl_div = self._calculate_kl_divergence(baseline_dist, new_dist)
         
-        # 2. Cosine Similarity - Semantic (topic drift)
-        baseline_semantic = np.array(baseline_stats['mean_semantic_embedding'])
-        new_semantic = np.mean([e['semantic_embedding'] for e in new_embeddings], axis=0)
+        # 2. Parse baseline embeddings (they're stored as strings)
+        if isinstance(baseline_stats['mean_semantic_embedding'], str):
+            baseline_semantic_str = baseline_stats['mean_semantic_embedding'].strip('[]')
+            baseline_semantic = np.array([float(x.strip()) for x in baseline_semantic_str.split(',')])
+        else:
+            baseline_semantic = np.array(baseline_stats['mean_semantic_embedding'])
         
+        if isinstance(baseline_stats['mean_sentiment_vector'], str):
+            baseline_sentiment_str = baseline_stats['mean_sentiment_vector'].strip('[]')
+            baseline_sentiment_vec = np.array([float(x.strip()) for x in baseline_sentiment_str.split(',')])
+        else:
+            baseline_sentiment_vec = np.array(baseline_stats['mean_sentiment_vector'])
+        
+        # 3. Parse new embeddings (also stored as strings)
+        parsed_semantic = []
+        parsed_sentiment = []
+        
+        for e in new_embeddings:
+            # Parse semantic embedding
+            if isinstance(e['semantic_embedding'], str):
+                semantic_str = e['semantic_embedding'].strip('[]')
+                semantic_array = [float(x.strip()) for x in semantic_str.split(',')]
+                parsed_semantic.append(semantic_array)
+            else:
+                parsed_semantic.append(e['semantic_embedding'])
+            
+            # Parse sentiment vector
+            if isinstance(e['sentiment_vector'], str):
+                sentiment_str = e['sentiment_vector'].strip('[]')
+                sentiment_array = [float(x.strip()) for x in sentiment_str.split(',')]
+                parsed_sentiment.append(sentiment_array)
+            else:
+                parsed_sentiment.append(e['sentiment_vector'])
+        
+        # 4. Calculate means for new articles
+        new_semantic = np.mean(parsed_semantic, axis=0)
+        new_sentiment_vec = np.mean(parsed_sentiment, axis=0)
+        
+        # 5. Cosine Similarity - Semantic (topic drift)
         cosine_semantic = 1 - cosine(baseline_semantic, new_semantic)
         
-        # 3. Cosine Similarity - Sentiment Vectors
-        baseline_sentiment_vec = np.array(baseline_stats['mean_sentiment_vector'])
-        new_sentiment_vec = np.mean([e['sentiment_vector'] for e in new_embeddings], axis=0)
-        
+        # 6. Cosine Similarity - Sentiment Vectors
         cosine_sentiment = 1 - cosine(baseline_sentiment_vec, new_sentiment_vec)
         
         return {
