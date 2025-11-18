@@ -186,12 +186,14 @@ def calculate_batch_metrics(articles: List[Dict]) -> Dict:
         sentiment_scores['neutral'].append(article['neutral_score'])
         sentiment_scores['negative'].append(article['negative_score'])
         
-        # Collect embeddings
-        if article.get('semantic_embedding'):
-            semantic_embeddings.append(article['semantic_embedding'])
+        # Collect embeddings - FIX: Check if array exists properly
+        semantic_emb = article.get('semantic_embedding')
+        if semantic_emb is not None and len(semantic_emb) > 0:  # FIXED
+            semantic_embeddings.append(semantic_emb)
         
-        if article.get('sentiment_vector'):
-            sentiment_vectors.append(article['sentiment_vector'])
+        sentiment_vec = article.get('sentiment_vector')
+        if sentiment_vec is not None and len(sentiment_vec) > 0:  # FIXED
+            sentiment_vectors.append(sentiment_vec)
     
     total = len(articles)
     
@@ -215,8 +217,8 @@ def calculate_batch_metrics(articles: List[Dict]) -> Dict:
     }
     
     # Calculate mean embeddings
-    mean_semantic = np.mean(semantic_embeddings, axis=0) if semantic_embeddings else None
-    mean_sentiment_vec = np.mean(sentiment_vectors, axis=0) if sentiment_vectors else None
+    mean_semantic = np.mean(semantic_embeddings, axis=0) if len(semantic_embeddings) > 0 else None
+    mean_sentiment_vec = np.mean(sentiment_vectors, axis=0) if len(sentiment_vectors) > 0 else None
     
     return {
         'sentiment_distribution': sentiment_dist,
