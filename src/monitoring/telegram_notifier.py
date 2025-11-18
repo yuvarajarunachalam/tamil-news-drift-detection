@@ -14,7 +14,7 @@ class TelegramNotifier:
         self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         
-        self.enabled = False
+        self.enabled = False  # ✅ Fixed typo
     
     def send_message(self, message: str) -> bool:
         """Send a message to Telegram"""
