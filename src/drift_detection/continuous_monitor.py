@@ -87,47 +87,87 @@ class ContinuousDriftMonitor:
         stats['sentiment_distribution'] = json.loads(stats['sentiment_distribution']) \
             if isinstance(stats['sentiment_distribution'], str) else stats['sentiment_distribution']
         
-        # Parse embeddings
-        mean_semantic = stats['mean_semantic_embedding']
-        if isinstance(mean_semantic, str):
-            mean_semantic = json.loads(mean_semantic.replace('[', '').replace(']', ''))
-        stats['mean_semantic_embedding'] = mean_semantic
+        # Helper function to parse pgvector format
+        def parse_vector(vector_str):
+            """Parse pgvector string to numpy array"""
+            if isinstance(vector_str, str):
+                # Remove brackets and split by comma
+                vector_str = vector_str.strip('[]')
+                values = [float(x.strip()) for x in vector_str.split(',')]
+                return np.array(values)
+            elif isinstance(vector_str, list):
+                return np.array(vector_str)
+            else:
+                return np.array(vector_str)
         
-        mean_sentiment = stats['mean_sentiment_vector']
-        if isinstance(mean_sentiment, str):
-            mean_sentiment = json.loads(mean_sentiment.replace('[', '').replace(']', ''))
-        stats['mean_sentiment_vector'] = mean_sentiment
+        # Parse embeddings using helper function
+        stats['mean_semantic_embedding'] = parse_vector(stats['mean_semantic_embedding'])
+        stats['mean_sentiment_vector'] = parse_vector(stats['mean_sentiment_vector'])
         
         logger.info(f"✅ Loaded baseline version {stats['version']}")
+        logger.info(f"   Semantic embedding shape: {stats['mean_semantic_embedding'].shape}")
+        logger.info(f"   Sentiment vector shape: {stats['mean_sentiment_vector'].shape}")
+        
         return stats
-    
     def _load_baseline_articles(self) -> list:
         """Load all baseline articles with sentiment and embeddings"""
-        # Fetch articles
+        # Fetch articles - LIMIT TO 1000 FOR SPEED
         response = self.client.table('news_cleaned')\
             .select('id, title, source, pub_date, content_full')\
             .eq('is_baseline', True)\
-            .limit(3000)\
+            .limit(1000)\
             .execute()
         
         articles = response.data
+        logger.info(f"   Fetched {len(articles)} articles")
         
-        # Fetch sentiment data
         article_ids = [a['id'] for a in articles]
-        sentiment_response = self.client.table('model_output')\
-            .select('*')\
-            .in_('article_id', article_ids)\
-            .execute()
         
-        sentiment_map = {s['article_id']: s for s in sentiment_response.data}
+        # Fetch sentiment data in SMALLER BATCHES (100 at a time)
+        sentiment_map = {}
+        BATCH_SIZE = 100
         
-        # Fetch embeddings
-        embedding_response = self.client.table('article_embeddings')\
-            .select('*')\
-            .in_('article_id', article_ids)\
-            .execute()
+        for i in range(0, len(article_ids), BATCH_SIZE):
+            batch_ids = article_ids[i:i+BATCH_SIZE]
+            try:
+                sentiment_response = self.client.table('model_output')\
+                    .select('*')\
+                    .in_('article_id', batch_ids)\
+                    .execute()
+                sentiment_map.update({s['article_id']: s for s in sentiment_response.data})
+                logger.info(f"   Fetched sentiment batch {i//BATCH_SIZE + 1}/{(len(article_ids) + BATCH_SIZE - 1)//BATCH_SIZE}")
+            except Exception as e:
+                logger.warning(f"   Error fetching sentiment batch: {e}")
         
-        embedding_map = {e['article_id']: e for e in embedding_response.data}
+        logger.info(f"   Total sentiment records: {len(sentiment_map)}")
+        
+        # Fetch embeddings in SMALLER BATCHES
+        embedding_map = {}
+        for i in range(0, len(article_ids), BATCH_SIZE):
+            batch_ids = article_ids[i:i+BATCH_SIZE]
+            try:
+                embedding_response = self.client.table('article_embeddings')\
+                    .select('*')\
+                    .in_('article_id', batch_ids)\
+                    .execute()
+                embedding_map.update({e['article_id']: e for e in embedding_response.data})
+                logger.info(f"   Fetched embedding batch {i//BATCH_SIZE + 1}/{(len(article_ids) + BATCH_SIZE - 1)//BATCH_SIZE}")
+            except Exception as e:
+                logger.warning(f"   Error fetching embedding batch: {e}")
+        
+        logger.info(f"   Total embedding records: {len(embedding_map)}")
+        
+        # Helper function to parse vectors
+        def parse_vector(vector_str):
+            """Parse pgvector string to numpy array"""
+            if isinstance(vector_str, str):
+                vector_str = vector_str.strip('[]')
+                values = [float(x.strip()) for x in vector_str.split(',')]
+                return np.array(values)
+            elif isinstance(vector_str, list):
+                return np.array(vector_str)
+            else:
+                return np.array(vector_str)
         
         # Combine data
         complete_articles = []
@@ -138,29 +178,25 @@ class ContinuousDriftMonitor:
                 sentiment = sentiment_map[article_id]
                 embedding = embedding_map[article_id]
                 
-                # Parse embeddings
-                semantic_emb = embedding['semantic_embedding']
-                if isinstance(semantic_emb, str):
-                    semantic_emb = json.loads(semantic_emb.replace('[', '').replace(']', ''))
-                
-                sentiment_vec = embedding['sentiment_vector']
-                if isinstance(sentiment_vec, str):
-                    sentiment_vec = json.loads(sentiment_vec.replace('[', '').replace(']', ''))
-                
-                complete_articles.append({
-                    'id': article_id,
-                    'title': article['title'],
-                    'source': article['source'],
-                    'pub_date': article['pub_date'],
-                    'content_full': article['content_full'],
-                    'sentiment_label': sentiment['sentiment_label'],
-                    'positive_score': sentiment['positive_score'],
-                    'neutral_score': sentiment['neutral_score'],
-                    'negative_score': sentiment['negative_score'],
-                    'semantic_embedding': np.array(semantic_emb),
-                    'sentiment_vector': np.array(sentiment_vec)
-                })
+                try:
+                    complete_articles.append({
+                        'id': article_id,
+                        'title': article['title'],
+                        'source': article['source'],
+                        'pub_date': article['pub_date'],
+                        'content_full': article['content_full'],
+                        'sentiment_label': sentiment['sentiment_label'],
+                        'positive_score': sentiment['positive_score'],
+                        'neutral_score': sentiment['neutral_score'],
+                        'negative_score': sentiment['negative_score'],
+                        'semantic_embedding': parse_vector(embedding['semantic_embedding']),
+                        'sentiment_vector': parse_vector(embedding['sentiment_vector'])
+                    })
+                except Exception as e:
+                    logger.warning(f"   Skipping article {article_id}: {e}")
+                    continue
         
+        logger.info(f"   Successfully loaded {len(complete_articles)} complete articles")
         return complete_articles
     
     def _create_test_batch(self, scenario: str, batch_size: int = 300) -> list:
