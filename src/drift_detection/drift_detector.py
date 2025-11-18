@@ -22,7 +22,32 @@ class DriftDetector:
             baseline_stats: Dict containing baseline statistics from database
         """
         self.baseline_stats = baseline_stats
-        self.baseline_sentiment = baseline_stats['sentiment_distribution']
+        # Handle flat sentiment distribution format from database
+        sentiment_dist = baseline_stats['sentiment_distribution']
+
+        if isinstance(sentiment_dist.get('positive'), float):
+            # Flat format - convert to nested
+            self.baseline_sentiment = {
+                'positive': {
+                    'proportion': sentiment_dist['positive'],
+                    'count': 0,  # Not stored
+                    'mean_score': 0  # Not stored
+                },
+                'neutral': {
+                    'proportion': sentiment_dist['neutral'],
+                    'count': 0,
+                    'mean_score': 0
+                },
+                'negative': {
+                    'proportion': sentiment_dist['negative'],
+                    'count': 0,
+                    'mean_score': 0
+                }
+            }
+        else:
+            # Already nested format
+            self.baseline_sentiment = sentiment_dist
+
         self.baseline_semantic = np.array(baseline_stats['mean_semantic_embedding'])
         self.baseline_sentiment_vector = np.array(baseline_stats['mean_sentiment_vector'])
         
