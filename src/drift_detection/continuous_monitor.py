@@ -8,7 +8,7 @@ import sys
 import time
 import numpy as np
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from supabase import create_client, Client
 from datadog import initialize, statsd
 import json
