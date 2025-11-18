@@ -11,6 +11,12 @@ import random
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 from datadog import initialize, statsd
+from datadog_api_client import ApiClient, Configuration
+from datadog_api_client.v2.api.metrics_api import MetricsApi
+from datadog_api_client.v2.model.metric_intake_type import MetricIntakeType
+from datadog_api_client.v2.model.metric_payload import MetricPayload
+from datadog_api_client.v2.model.metric_point import MetricPoint
+from datadog_api_client.v2.model.metric_series import MetricSeries
 import json
 import logging
 
@@ -40,20 +46,16 @@ class ContinuousDriftMonitor:
         logger.info("✅ Supabase client initialized")
         
         # DataDog
-        datadog_api_key = os.getenv('DATADOG_API_KEY')
-        
-        if not datadog_api_key:
+        self.datadog_api_key = os.getenv('DATADOG_API_KEY')
+
+        if not self.datadog_api_key:
             raise ValueError("DATADOG_API_KEY must be set")
-        
-        options = {
-            'api_key': datadog_api_key,
-            'app_key': os.getenv('DATADOG_APP_KEY', ''),  # Optional
-            'statsd_host': 'localhost',
-            'statsd_port': 8125,
-        }
-        
-        initialize(**options)
-        logger.info("✅ DataDog initialized (US5 region)")
+
+        self.datadog_config = Configuration()
+        self.datadog_config.api_key["apiKeyAuth"] = self.datadog_api_key
+        self.datadog_config.server_variables["site"] = "us5.datadoghq.com"
+
+        logger.info("✅ DataDog HTTP API initialized (US5 region)")
         
         # Load baseline statistics
         self.baseline_stats = self._load_baseline_stats()
@@ -325,36 +327,80 @@ class ContinuousDriftMonitor:
         return drift_results
     
     def _send_to_datadog(self, drift_results: dict, processing_time: float):
-        """Send metrics to DataDog"""
+        """Send metrics to DataDog via HTTP API"""
         try:
-            # Drift metrics
-            statsd.gauge('drift.kl_divergence', drift_results['kl_divergence'], 
-                        tags=['env:production', 'service:drift-detection'])
+            timestamp = int(datetime.now().timestamp())
             
-            statsd.gauge('drift.cosine_similarity_semantic', drift_results['cosine_similarity_semantic'],
-                        tags=['env:production', 'service:drift-detection'])
-            
-            statsd.gauge('drift.cosine_similarity_sentiment', drift_results['cosine_similarity_sentiment'],
-                        tags=['env:production', 'service:drift-detection'])
-            
-            # Alert counter
-            if drift_results['drift_detected']:
-                statsd.increment('drift.alerts', 
-                               tags=['env:production', 'service:drift-detection', 
-                                     f"severity:{drift_results['severity'].lower()}"])
-            
-            # Processing time
-            statsd.timing('drift.processing_time_ms', processing_time * 1000,
-                         tags=['env:production', 'service:drift-detection'])
-            
-            # Batch size
-            statsd.gauge('drift.test_batch_size', drift_results['test_article_count'],
-                        tags=['env:production', 'service:drift-detection'])
-            
-            logger.info("✅ Metrics sent to DataDog")
-            
+            with ApiClient(self.datadog_config) as api_client:
+                api_instance = MetricsApi(api_client)
+                
+                # Prepare metrics
+                series = [
+                    # KL Divergence
+                    MetricSeries(
+                        metric="tamil_news.drift.kl_divergence",
+                        type=MetricIntakeType.GAUGE,
+                        points=[MetricPoint(timestamp=timestamp, value=drift_results['kl_divergence'])],
+                        tags=["env:production", "service:drift-detection"]
+                    ),
+                    # Cosine Similarity - Semantic
+                    MetricSeries(
+                        metric="tamil_news.drift.cosine_similarity_semantic",
+                        type=MetricIntakeType.GAUGE,
+                        points=[MetricPoint(timestamp=timestamp, value=drift_results['cosine_similarity_semantic'])],
+                        tags=["env:production", "service:drift-detection"]
+                    ),
+                    # Cosine Similarity - Sentiment
+                    MetricSeries(
+                        metric="tamil_news.drift.cosine_similarity_sentiment",
+                        type=MetricIntakeType.GAUGE,
+                        points=[MetricPoint(timestamp=timestamp, value=drift_results['cosine_similarity_sentiment'])],
+                        tags=["env:production", "service:drift-detection"]
+                    ),
+                    # Processing time
+                    MetricSeries(
+                        metric="tamil_news.drift.processing_time_seconds",
+                        type=MetricIntakeType.GAUGE,
+                        points=[MetricPoint(timestamp=timestamp, value=processing_time)],
+                        tags=["env:production", "service:drift-detection"]
+                    ),
+                    # Test batch size
+                    MetricSeries(
+                        metric="tamil_news.drift.test_batch_size",
+                        type=MetricIntakeType.GAUGE,
+                        points=[MetricPoint(timestamp=timestamp, value=drift_results['test_article_count'])],
+                        tags=["env:production", "service:drift-detection"]
+                    )
+                ]
+                
+                # Add alert counter if drift detected
+                if drift_results['drift_detected']:
+                    series.append(
+                        MetricSeries(
+                            metric="tamil_news.drift.alerts",
+                            type=MetricIntakeType.COUNT,
+                            points=[MetricPoint(timestamp=timestamp, value=1)],
+                            tags=[
+                                "env:production", 
+                                "service:drift-detection",
+                                f"severity:{drift_results['severity'].lower()}"
+                            ]
+                        )
+                    )
+                
+                # Send to DataDog
+                body = MetricPayload(series=series)
+                response = api_instance.submit_metrics(body=body)
+                
+                logger.info("✅ Metrics sent to DataDog")
+                logger.info(f"   KL Divergence: {drift_results['kl_divergence']:.4f}")
+                logger.info(f"   Cosine Semantic: {drift_results['cosine_similarity_semantic']:.4f}")
+                logger.info(f"   Cosine Sentiment: {drift_results['cosine_similarity_sentiment']:.4f}")
+                if drift_results['drift_detected']:
+                    logger.info(f"   🚨 DRIFT ALERT - Severity: {drift_results['severity']}")
+                
         except Exception as e:
-            logger.error(f"⚠️ DataDog error: {e}")
+            logger.error(f"⚠️ DataDog HTTP API error: {e}")
     
     def run_continuous_monitoring(self, duration_hours: float = 3.0, 
                                   interval_minutes: int = 5):
