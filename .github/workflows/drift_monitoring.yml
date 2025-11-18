@@ -1,0 +1,62 @@
+name: Continuous Drift Monitoring
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_hours:
+        description: "Duration in hours"
+        required: true
+        default: "3.0"
+        type: string
+      interval_minutes:
+        description: "Interval in minutes"
+        required: true
+        default: "5"
+        type: string
+
+jobs:
+  drift-monitoring:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200 # 3+ hours safety margin
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy supabase datadog
+
+      - name: Run continuous drift monitoring
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DATADOG_APP_KEY: ${{ secrets.DATADOG_APP_KEY }}
+        run: |
+          echo "🚀 Starting continuous drift monitoring..."
+          echo "Duration: ${{ inputs.duration_hours }} hours"
+          echo "Interval: ${{ inputs.interval_minutes }} minutes"
+          echo "Start time: $(date)"
+
+          python src/drift_detection/continuous_monitor.py \
+            --duration ${{ inputs.duration_hours }} \
+            --interval ${{ inputs.interval_minutes }}
+
+          echo "✅ Monitoring complete!"
+          echo "End time: $(date)"
+
+      - name: Upload logs (if available)
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: monitoring-logs
+          path: |
+            *.log
+          retention-days: 7
