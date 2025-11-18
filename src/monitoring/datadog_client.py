@@ -32,8 +32,14 @@ class DataDogClient:
                 from datadog_api_client.v1.model.point import Point
                 
                 self.configuration = Configuration()
+
+                # CRITICAL: Configure for US5 DataDog site
+                self.configuration.server_variables["site"] = "us5.datadoghq.com"
+
                 self.configuration.api_key['apiKeyAuth'] = self.api_key
                 self.configuration.api_key['appKeyAuth'] = self.app_key
+
+                print(f"✅ DataDog configured for US5 site")
                 
                 # Store classes
                 self.ApiClient = ApiClient
