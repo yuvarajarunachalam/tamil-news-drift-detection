@@ -1,0 +1,110 @@
+name: 2-Hour Fake Metrics Generation
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: "Duration in minutes"
+        required: true
+        default: "120"
+        type: string
+
+jobs:
+  generate-metrics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 130 # 2+ hours safety margin
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install datadog-api-client
+
+      - name: Run 2-hour fake metrics generation
+        env:
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+        run: |
+          echo "🚀 Starting 2-hour fake metrics generation"
+          echo "Duration: ${{ inputs.duration_minutes }} minutes"
+          echo "Interval: 1 minute"
+          echo "Total runs: ${{ inputs.duration_minutes }}"
+          echo "Start time: $(date)"
+          echo ""
+
+          # Calculate end time
+          DURATION_MINUTES=${{ inputs.duration_minutes }}
+          TOTAL_RUNS=$DURATION_MINUTES
+
+          echo "📊 Alert Schedule:"
+          echo "   Runs 1-115: Normal metrics with gradual decline"
+          echo "   Run 116: ⚠️  SEMANTIC WARNING (cosine < 0.8)"
+          echo "   Runs 117-119: Continued decline"
+          echo "   Run 120: 🚨 KL CRITICAL (KL > 0.1)"
+          echo ""
+          echo "======================================================================"
+
+          # Run loop
+          for i in $(seq 1 $TOTAL_RUNS); do
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "⏰ ITERATION $i/$TOTAL_RUNS"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            
+            # Set run number as environment variable
+            export RUN_NUMBER=$i
+            
+            # Run the generator
+            python src/drift_detection/fake_metrics_generator.py
+            
+            # Progress indicator
+            PERCENT=$((i * 100 / TOTAL_RUNS))
+            echo ""
+            echo "Progress: [$PERCENT%] $i/$TOTAL_RUNS runs complete"
+            
+            # Special messages for alert runs
+            if [ $i -eq 115 ]; then
+              echo ""
+              echo "⚠️  NEXT RUN: Semantic WARNING will be triggered!"
+            elif [ $i -eq 116 ]; then
+              echo ""
+              echo "✅ Semantic WARNING triggered! Check email."
+            elif [ $i -eq 119 ]; then
+              echo ""
+              echo "🚨 NEXT RUN: KL CRITICAL will be triggered!"
+            elif [ $i -eq 120 ]; then
+              echo ""
+              echo "✅ KL CRITICAL triggered! Check email."
+              echo "🎉 All metrics generation complete!"
+            fi
+            
+            # Wait 1 minute before next iteration (except last run)
+            if [ $i -lt $TOTAL_RUNS ]; then
+              echo ""
+              echo "⏸️  Waiting 60 seconds..."
+              sleep 60
+            fi
+          done
+
+          echo ""
+          echo "======================================================================"
+          echo "✅ 2-HOUR FAKE METRICS GENERATION COMPLETE!"
+          echo "======================================================================"
+          echo "End time: $(date)"
+          echo ""
+          echo "📊 Summary:"
+          echo "   Total runs: $TOTAL_RUNS"
+          echo "   Duration: $DURATION_MINUTES minutes"
+          echo "   Alerts triggered: 2"
+          echo "     - Run 116: Semantic WARNING"
+          echo "     - Run 120: KL CRITICAL"
+          echo ""
+          echo "📧 Check your email for alert notifications!"
+          echo "📈 Check DataDog dashboard: https://us5.datadoghq.com/"
