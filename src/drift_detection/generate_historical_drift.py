@@ -87,42 +87,51 @@ class HistoricalDriftGenerator:
     
     def _load_baseline_articles(self) -> list:
         """Load all baseline articles with sentiment and embeddings"""
-        # Fetch articles with their sentiment and embeddings
+        # Fetch articles - LIMIT TO 1000 FOR SPEED
         response = self.client.table('news_cleaned')\
             .select('id, title, source, pub_date, content_full')\
             .eq('is_baseline', True)\
-            .limit(3000)\
+            .limit(1000)\
             .execute()
         
         articles = response.data
         logger.info(f"   Fetched {len(articles)} articles")
         
-        # Fetch sentiment data
         article_ids = [a['id'] for a in articles]
         
-        # Batch fetch in chunks of 1000
+        # Fetch sentiment data in SMALLER BATCHES (100 at a time)
         sentiment_map = {}
-        for i in range(0, len(article_ids), 1000):
-            batch_ids = article_ids[i:i+1000]
-            sentiment_response = self.client.table('model_output')\
-                .select('*')\
-                .in_('article_id', batch_ids)\
-                .execute()
-            sentiment_map.update({s['article_id']: s for s in sentiment_response.data})
+        BATCH_SIZE = 100  # Reduce from 1000 to 100
         
-        logger.info(f"   Fetched {len(sentiment_map)} sentiment records")
+        for i in range(0, len(article_ids), BATCH_SIZE):
+            batch_ids = article_ids[i:i+BATCH_SIZE]
+            try:
+                sentiment_response = self.client.table('model_output')\
+                    .select('*')\
+                    .in_('article_id', batch_ids)\
+                    .execute()
+                sentiment_map.update({s['article_id']: s for s in sentiment_response.data})
+                logger.info(f"   Fetched sentiment batch {i//BATCH_SIZE + 1}/{(len(article_ids) + BATCH_SIZE - 1)//BATCH_SIZE}")
+            except Exception as e:
+                logger.warning(f"   Error fetching sentiment batch: {e}")
         
-        # Fetch embeddings
+        logger.info(f"   Total sentiment records: {len(sentiment_map)}")
+        
+        # Fetch embeddings in SMALLER BATCHES
         embedding_map = {}
-        for i in range(0, len(article_ids), 1000):
-            batch_ids = article_ids[i:i+1000]
-            embedding_response = self.client.table('article_embeddings')\
-                .select('*')\
-                .in_('article_id', batch_ids)\
-                .execute()
-            embedding_map.update({e['article_id']: e for e in embedding_response.data})
+        for i in range(0, len(article_ids), BATCH_SIZE):
+            batch_ids = article_ids[i:i+BATCH_SIZE]
+            try:
+                embedding_response = self.client.table('article_embeddings')\
+                    .select('*')\
+                    .in_('article_id', batch_ids)\
+                    .execute()
+                embedding_map.update({e['article_id']: e for e in embedding_response.data})
+                logger.info(f"   Fetched embedding batch {i//BATCH_SIZE + 1}/{(len(article_ids) + BATCH_SIZE - 1)//BATCH_SIZE}")
+            except Exception as e:
+                logger.warning(f"   Error fetching embedding batch: {e}")
         
-        logger.info(f"   Fetched {len(embedding_map)} embedding records")
+        logger.info(f"   Total embedding records: {len(embedding_map)}")
         
         # Helper function to parse vectors
         def parse_vector(vector_str):
