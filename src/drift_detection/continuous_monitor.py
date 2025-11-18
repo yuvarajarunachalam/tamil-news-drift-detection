@@ -378,7 +378,7 @@ class ContinuousDriftMonitor:
         logger.info(f"   Interval: {interval_minutes} minutes")
         logger.info(f"   Total runs: {total_runs}")
         logger.info(f"   Start time: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info(f"   End time: {(self.start_time + datetime.timedelta(hours=duration_hours)).strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"   End time: {(self.start_time + timedelta(hours=duration_hours)).strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 70)
         
         # Send initial heartbeat to DataDog
