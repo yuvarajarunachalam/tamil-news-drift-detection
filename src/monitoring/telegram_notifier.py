@@ -14,11 +14,7 @@ class TelegramNotifier:
         self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         
-        if not self.bot_token or not self.chat_id:
-            print("⚠️ Warning: Telegram credentials not found in environment variables")
-            self.enabled = False
-        else:
-            self.enabled = True
+        self.enable = False
     
     def send_message(self, message: str) -> bool:
         """Send a message to Telegram"""

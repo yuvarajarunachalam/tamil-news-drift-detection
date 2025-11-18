@@ -160,7 +160,10 @@ class BaselineGenerator:
         # Generate embeddings - extract texts for embedding generator
         self.logger.info(f"Generating embeddings for {len(articles)} articles...")
         texts = [article['content_full'] for article in articles]
-        semantic_embeddings = self.embedding_generator.generate_semantic_embeddings(texts)
+        semantic_embeddings = np.array([
+    self.embedding_generator.generate_semantic_embedding(text) 
+    for text in texts
+])
         
         # Prepare embedding data for insertion
         embedding_data = []
@@ -200,6 +203,10 @@ class BaselineGenerator:
         sentiment_scores = self.db.get_all_sentiment_scores(is_baseline=True)
         embeddings = self.db.get_all_embeddings(is_baseline=True)
         
+        if not sentiment_scores or not embeddings:
+            self.logger.error("No baseline data found to calculate statistics")
+            return
+        
         # Calculate sentiment distribution
         total = len(sentiment_scores)
         positive_count = sum(1 for s in sentiment_scores if s['sentiment_label'] == 'positive')
@@ -212,9 +219,32 @@ class BaselineGenerator:
             'negative': round(negative_count / total, 4)
         }
         
+        # Parse embeddings (they're stored as strings in pgvector format)
+        import json
+        parsed_semantic = []
+        parsed_sentiment = []
+        
+        for e in embeddings:
+            # Parse semantic embedding
+            if isinstance(e['semantic_embedding'], str):
+                # Remove brackets and split by comma
+                semantic_str = e['semantic_embedding'].strip('[]')
+                semantic_array = [float(x.strip()) for x in semantic_str.split(',')]
+                parsed_semantic.append(semantic_array)
+            else:
+                parsed_semantic.append(e['semantic_embedding'])
+            
+            # Parse sentiment vector
+            if isinstance(e['sentiment_vector'], str):
+                sentiment_str = e['sentiment_vector'].strip('[]')
+                sentiment_array = [float(x.strip()) for x in sentiment_str.split(',')]
+                parsed_sentiment.append(sentiment_array)
+            else:
+                parsed_sentiment.append(e['sentiment_vector'])
+        
         # Calculate mean embeddings
-        semantic_embeddings = np.array([e['semantic_embedding'] for e in embeddings])
-        sentiment_vectors = np.array([e['sentiment_vector'] for e in embeddings])
+        semantic_embeddings = np.array(parsed_semantic)
+        sentiment_vectors = np.array(parsed_sentiment)
         
         mean_semantic_embedding = np.mean(semantic_embeddings, axis=0).tolist()
         mean_sentiment_vector = np.mean(sentiment_vectors, axis=0).tolist()
