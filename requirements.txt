@@ -20,3 +20,4 @@ feedparser
 beautifulsoup4
 datadog-api-client
 requests
+datadog-api-client>=2.0.0
