@@ -14,3 +14,9 @@ scipy==1.11.4
 
 # Utilities
 tqdm==4.66.1
+
+# Phase C - Daily ingestion
+feedparser
+beautifulsoup4
+datadog-api-client
+requests
