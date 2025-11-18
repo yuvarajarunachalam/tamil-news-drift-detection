@@ -127,9 +127,26 @@ class SupabaseClient:
         Returns:
             List of sentiment score dictionaries
         """
-        response = self.client.table('model_output').select('*').eq('is_baseline', is_baseline).execute()
-        return response.data
-    
+        # Supabase has a default limit of 1000, need to paginate
+        all_data = []
+        offset = 0
+        batch_size = 1000
+        
+        while True:
+            response = self.client.table('model_output').select('*').eq('is_baseline', is_baseline).range(offset, offset + batch_size - 1).execute()
+            
+            if not response.data:
+                break
+            
+            all_data.extend(response.data)
+            
+            if len(response.data) < batch_size:
+                break
+            
+            offset += batch_size
+        
+        return all_data
+
     def get_all_embeddings(self, is_baseline: bool = True) -> List[Dict[str, Any]]:
         """
         Fetch all embeddings for baseline or test articles
@@ -140,9 +157,26 @@ class SupabaseClient:
         Returns:
             List of embedding dictionaries
         """
-        response = self.client.table('article_embeddings').select('*').eq('is_baseline', is_baseline).execute()
-        return response.data
-    
+        # Supabase has a default limit of 1000, need to paginate
+        all_data = []
+        offset = 0
+        batch_size = 1000
+        
+        while True:
+            response = self.client.table('article_embeddings').select('*').eq('is_baseline', is_baseline).range(offset, offset + batch_size - 1).execute()
+            
+            if not response.data:
+                break
+            
+            all_data.extend(response.data)
+            
+            if len(response.data) < batch_size:
+                break
+            
+            offset += batch_size
+        
+        return all_data
+        
     # ==================== PROCESSING LOG QUERIES ====================
     
     def get_completed_batches(self) -> List[int]:
