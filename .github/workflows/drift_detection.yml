@@ -56,5 +56,5 @@ jobs:
       - name: Pipeline completed
         if: success()
         run: |
-          echo "✅ Pipeline completed successfully!"
+          echo "Pipeline completed successfully!"
           echo "Check your Supabase database for results."
