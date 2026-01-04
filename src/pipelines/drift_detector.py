@@ -16,7 +16,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database.supabase_client import SupabaseClient
 from monitoring.datadog_client import DataDogClient
-from monitoring.telegram_notifier import TelegramNotifier
 from utils.logger import setup_logger
 
 
@@ -27,7 +26,6 @@ class DriftDetector:
         """Initialize drift detector"""
         self.db = SupabaseClient()
         self.datadog = DataDogClient()
-        self.telegram = TelegramNotifier()
         self.logger = setup_logger()
         
         # Drift thresholds
@@ -79,10 +77,8 @@ class DriftDetector:
         
         if drift_detected:
             self.logger.warning(f"Drift detected! Metrics: {metrics}")
-            self.telegram.send_message(f"⚠️ Drift detected!\n\nKL Divergence: {metrics['kl_divergence']:.4f}\nCosine Semantic: {metrics['cosine_semantic']:.4f}")
         else:
             self.logger.info(f"No significant drift detected. Metrics: {metrics}")
-            self.telegram.send_message(f"✅ No drift detected today\n\nKL Divergence: {metrics['kl_divergence']:.4f}\nNew articles: {len(new_sentiment)}")
         
         self.logger.info("Drift detection complete")
     
@@ -240,4 +236,5 @@ class DriftDetector:
 
 if __name__ == "__main__":
     detector = DriftDetector()
+
     detector.run()
